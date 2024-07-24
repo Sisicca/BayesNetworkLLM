@@ -18,6 +18,9 @@ st.write("## 贝叶斯网络模型")
 
 tab1, tab2 = st.tabs(["导入模型", "模型图例"])
 
+if "bn_model" not in st.session_state:
+    st.session_state.bn_model = BayesianModel.load(filename='BayesNetwork_hw.bif', filetype='bif')
+
 with tab1:
     import_bn = st.button("导入模型")
     if import_bn:
