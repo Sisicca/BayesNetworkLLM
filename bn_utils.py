@@ -45,8 +45,7 @@ def _improve_ratio_1(target:Dict[str,str], improve:Dict[str,str], evidence:Dict[
     others = {}
     others.update(evidence)
     others.update(user_problem_type)
-    others = _dict_subtract(others, target)
-    others = _dict_subtract(others, improve)
+    others = _dict_subtract(others, target|improve)
     
     for indicator_name, indicator_type in new_target.items():
         numerator = infer.query(variables=[indicator_name], evidence=new_improve|others, show_progress=False)
@@ -64,7 +63,7 @@ def _improve_ratio_1(target:Dict[str,str], improve:Dict[str,str], evidence:Dict[
     if numerator == 0 and denominator == 0:
         return 1.0
     elif numerator != 0 and denominator == 0:
-        return float("inf")
+        return 2.0 # 如果是inf 误差可能太大
     return numerator / denominator
 
 # 改善能力评估指标二
@@ -79,8 +78,7 @@ def _improve_ratio_2(target:Dict[str,str], improve:Dict[str,str], evidence:Dict[
     others = {}
     others.update(evidence)
     others.update(user_problem_type)
-    others = _dict_subtract(others, target)
-    others = _dict_subtract(others, improve)
+    others = _dict_subtract(others, target|improve)
     
     for indicator_name, indicator_type in target.items():
         posterior1 = infer.query(variables=[indicator_name], evidence=new_improve|others, show_progress=False)
@@ -103,7 +101,7 @@ def _improve_ratio_2(target:Dict[str,str], improve:Dict[str,str], evidence:Dict[
     if numerator == 0 and denominator == 0:
         return 1.0
     elif numerator != 0 and denominator == 0:
-        return float("inf")    
+        return 2.0 # 如果是inf 误差可能太大
     return numerator / denominator
 
 # 已知异常节点排序
@@ -142,7 +140,8 @@ def posterior_sort(evidence:Dict[str,str], user_problem_type:Dict[str,str], bn:B
 
 # 未知异常节点预测
 def abnormal_predict(evidence:Dict[str,str], user_problem_type:Dict[str,str], bn:BayesianNetwork, max_predict:Optional[int]=None) -> List[str]:
-    """_summary_
+    """
+    预测未知节点里有哪些是异常的
 
     Args:
         evidence (Dict[str,str]): {"B" : "2", "C" : "1"} -----> A is unknown
@@ -172,8 +171,23 @@ def abnormal_predict(evidence:Dict[str,str], user_problem_type:Dict[str,str], bn
     return abnormal_list
 
 # 目标异常节点改善
-def improve_sort(target:Dict[str,str], evidence:Dict[str,str], user_problem_type:Dict[str,str], bn:BayesianNetwork, improve_ratio_type:str="1") -> List[Tuple[str,float]]:
-    
+def improve_sort(target:Dict[str,str], evidence:Dict[str,str], user_problem_type:Dict[str,str], bn:BayesianNetwork, improve_ratio_type:str="1") -> List[Tuple[dict,float]]:
+    """
+    计算evidence里improve indicators的ratio 然后排序 然后排序后的列表。
+
+    Args:
+        target (Dict[str,str]): _description_
+        evidence (Dict[str,str]): _description_
+        user_problem_type (Dict[str,str]): _description_
+        bn (BayesianNetwork): _description_
+        improve_ratio_type (str, optional): _description_. Defaults to "1".
+
+    Raises:
+        ValueError: ratio计算公式只有"1","2"可选    
+
+    Returns:
+        List[Tuple[dict,float]]: _description_
+    """
     
     if improve_ratio_type not in {"1", "2"}:
         raise ValueError("improve_ratio must be '1' or '2'!")
@@ -183,11 +197,16 @@ def improve_sort(target:Dict[str,str], evidence:Dict[str,str], user_problem_type
     
     target_name, target_type = list(target.items())[0]
     assert is_abnormal(target_name, target_type) == True, f"{target_name} is already healthy!"
+    assert is_improve(target_name, target_type) == False, f"{target_name} is an improve indicator, but it should be a negtive indicator!"
     
     # 排序节点一定是主动节点
-    improve_list = [{indicator_name : indicator_type} for indicator_name, indicator_type in evidence.items() if is_improve(indicator_name, indicator_type)]
-    # 排序节点不一定是主动节点
-    # improve_list = [{indicator_name : indicator_type} for indicator_name, indicator_type in evidence.items()]
+    improve_list = [{indicator_name : indicator_type}
+                    for indicator_name, indicator_type in evidence.items()
+                    if is_improve(indicator_name, indicator_type)]
+    
+    # 如果evidence里没有一个improve indicator 那就返回空列表
+    if not improve_list:
+        return []
     
     result = []
     
@@ -200,10 +219,56 @@ def improve_sort(target:Dict[str,str], evidence:Dict[str,str], user_problem_type
     
     return comb_result
 
+def abnormal_max(target:Dict[str,str], evidence:Dict[str,str], user_problem_type:Dict[str,str], bn:BayesianNetwork, improve_ratio_type:str="1") -> dict:
+        
+    if improve_ratio_type not in {"1", "2"}:
+        raise ValueError("improve_ratio must be '1' or '2'!")
+    _improve_ratio = _improve_ratio_1 if improve_ratio_type == "1" else _improve_ratio_2
+    
+    assert len(target) == 1, "One target once time!"
+    
+    target_name, target_type = list(target.items())[0]
+    assert is_abnormal(target_name, target_type) == True, f"{target_name} is already healthy!"
+    
+    # 节点一定是异常节点
+    abnormal_list = [{indicator_name : indicator_type}
+                     for indicator_name, indicator_type in evidence.items()
+                     if (is_abnormal(indicator_name, indicator_type) and indicator_name != target_name)]
+    
+    # 如果evidence里 没有一个不同于target的abnormal indicator 就返回空字典
+    if not abnormal_list:
+        return {}
+    
+    result = []
+    
+    for abnormal in abnormal_list:
+        result.append(_improve_ratio(target, abnormal, evidence, user_problem_type, bn))
+    
+    comb_result = list(zip(abnormal_list, result))
+    max_result = max(comb_result, key=lambda x: x[1])
+    
+    return max_result[0]
 
+def abnormal_max_recursion(target:Dict[str,str], evidence:Dict[str,str], user_problem_type:Dict[str,str], bn:BayesianNetwork, improve_ratio_type:str="1") -> dict:
+    if not target:
+        return {}
+    
+    target_name, target_type = list(target.items())[0]
+    if is_improve(target_name, target_type):
+        return target
+    
+    new_target = abnormal_max(target, evidence, user_problem_type, bn, improve_ratio_type)
+    new_evidence = _dict_subtract(evidence, target)
+    new_user_problem_type = _dict_subtract(user_problem_type, target)
+    
+    return abnormal_max_recursion(new_target, new_evidence, new_user_problem_type, bn, improve_ratio_type)
 
 if __name__ == "__main__":
     model = BayesianNetwork.load("BayesNetwork_hw.bif")
     # print(posterior_sort(evidence={"体重":"1", "压力值":"2"}, user_problem_type={"运动表现异常":"1"}, bn=model))
     # print(abnormal_predict(evidence={"体重":"1", "压力值":"2", "睡眠得分":"1", "深睡比例":"1", "睡眠时长":"1", "年龄":"1"}, user_problem_type={"运动表现异常":"1", "睡眠异常":"1"}, bn=model))
-    print(improve_sort(target={"肺健康异常":"1"}, evidence={"肺功能评估":"1","肺部感染风险":"1","深睡比例":"1","血氧":"1"}, user_problem_type={"肺健康异常":"1"}, bn=model, improve_ratio_type="1"))
+    # print(improve_sort(target={"肺健康异常":"1"}, evidence={"肺功能评估":"1","肺部感染风险":"1","压力值":"2","深睡比例":"1","血氧":"1"}, user_problem_type={"肺健康异常":"1"}, bn=model, improve_ratio_type="1"))
+    # print(abnormal_max(target={"肺健康异常":"1"}, evidence={"肺功能评估":"1","肺部感染风险":"1","深睡比例":"1","血氧":"1", "压力值":"2"}, user_problem_type={"肺健康异常":"1"}, bn=model, improve_ratio_type="1"))
+    # print(abnormal_max_recursion(target={"肺健康异常":"1"}, evidence={"肺功能评估":"1","肺部感染风险":"1"}, user_problem_type={"肺健康异常":"1"}, bn=model, improve_ratio_type="1"))
+    print(abnormal_max_recursion(target={"肺健康异常":"1"}, evidence={"肺功能评估":"1","肺部感染风险":"1"}, user_problem_type={"肺健康异常":"1"}, bn=model, improve_ratio_type="1"))
+    # print(improve_sort(target={"心电图":"2"}, evidence={"压力值":"3", "体重":"1", "睡眠时长":"0", "血氧":"1"}, user_problem_type={"心脏健康异常":"1"}, bn=model))
