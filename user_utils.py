@@ -98,8 +98,8 @@ SAMPLE_DATA = {
         "心血管风险" : "低", # 低，中，高
         "脉搏波传导速度" : "中", # 慢，中，快
         "血管弹性" : "稍差", # 正常，稍差
-        "肺功能评估" : "较差", # 良好，中等，较差
-        "肺部感染风险" : "高", # 低，中，高
+        "肺功能评估" : "中等", # 良好，中等，较差
+        "肺部感染风险" : "中", # 低，中，高
         "慢阻肺风险" : "低", # 低，中，高
     }
 }
@@ -201,7 +201,7 @@ def is_abnormal(indicator_name:str, indicator_type:str) -> bool:
 def is_improve(indicator_name:str, indicator_type:str) -> bool:
     improve_indicators = {"体重", "体脂率", "睡眠时长", "深睡比例", "压力值",
                           "静息心率", "睡眠呼吸率", "活动热量", "步数", "清醒次数",
-                          "运动心率"}
+                          "运动心率", "血氧"}
     return (indicator_name in improve_indicators) and is_abnormal(indicator_name, indicator_type)
 
 def is_user_problem(indicator_name:str) -> bool:

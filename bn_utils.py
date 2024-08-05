@@ -65,7 +65,7 @@ def _improve_ratio_1(target:Dict[str,str], improve:Dict[str,str], evidence:Dict[
     if numerator == 0 and denominator == 0:
         return 1.0
     elif numerator != 0 and denominator == 0:
-        return 1.1 # 如果是inf 误差可能太大
+        return 1.0 # 如果是inf 误差可能太大
     return numerator / denominator
 
 # 改善能力评估指标二
@@ -103,7 +103,7 @@ def _improve_ratio_2(target:Dict[str,str], improve:Dict[str,str], evidence:Dict[
     if numerator == 0 and denominator == 0:
         return 1.0
     elif numerator != 0 and denominator == 0:
-        return 1.1 # 如果是inf 误差可能太大
+        return 1.0 # 如果是inf 误差可能太大
     return numerator / denominator
 
 # 已知异常节点排序
