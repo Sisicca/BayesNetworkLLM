@@ -187,7 +187,8 @@ def is_abnormal(indicator_name:str, indicator_type:str) -> bool:
                            "睡眠心率", "睡眠血氧", "睡眠呼吸率", "静息心率", "血氧",
                             "DBP", "SBP", "步数", "REM", "活动热量",
                             "运动心率", "血管弹性", "心血管风险", "肺功能评估", "肺部感染风险",
-                            "慢阻肺风险"}:
+                            "慢阻肺风险",
+                            "心脏健康异常", "运动表现异常", "睡眠异常", "其他问题异常", "肺健康异常"}:
         return indicator_type != "0"
     elif indicator_name in {"睡眠得分", "压力值", "心电图"}:
         return indicator_type not in {"0", "1"}

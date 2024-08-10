@@ -6,6 +6,7 @@ from typing import List, Tuple, Dict, Set, Optional, Union
 import numpy as np
 import pandas as pd
 import warnings
+import networkx as nx
 
 # 对后验概率做softmax
 def _softmax(x:List[float]) -> List[float]:
@@ -106,6 +107,88 @@ def _improve_ratio_2(target:Dict[str,str], improve:Dict[str,str], evidence:Dict[
         return 1.0 # 如果是inf 误差可能太大
     return numerator / denominator
 
+def _get_risk_nodes(target:Dict[str,str], evidence:Dict[str,str], bn:BayesianNetwork) -> List[Dict[str,str]]:
+    assert len(target) == 1, "One target once time!"
+    
+    target_name, target_type = list(target.items())[0]
+    assert is_abnormal(target_name, target_type) == True, f"{target_name} is already healthy!"
+    
+    anc_list = [target_name]
+    for node in anc_list:
+        parents = bn.get_parents(node=node)
+        _ = [anc_list.append(parent) for parent in parents if is_abnormal(parent, evidence[parent])]
+    
+    anc_dict = {node : evidence[node] for node in anc_list if node != target_name}
+    
+    anc_dict_list = [{indicator_name : indicator_type} for indicator_name, indicator_type in anc_dict.items()]
+    
+    return anc_dict_list
+
+def _get_abnormal_nodes_between_target_source(target:Dict[str,str], source:Dict[str,str], evidence:Dict[str,str], bn:BayesianNetwork) -> Dict[str,str]:
+    
+    assert len(target) == 1, "One target once time!"
+    assert len(source) == 1, "One source once time!"
+    
+    target_name = list(target.keys())[0]
+    source_name=list(source.keys())[0]
+    
+    all_paths = list(nx.all_simple_paths(bn, target=target_name, source=source_name))
+    all_nodes = set()
+    for path in all_paths:
+        all_nodes.update(path)
+        
+    nodes_dict = {node : evidence[node] for node in all_nodes if node not in [target_name, source_name] and is_abnormal(node, evidence[node])}
+    
+    return nodes_dict
+
+def _risk_ratio(target:Dict[str,str], source:Dict[str,str], evidence:Dict[str,str], user_problem_type:Dict[str,str], bn:BayesianNetwork) -> float:
+    """
+        ratio = P(目标节点=y|主动节点=x,others)/P(目标节点=y|主动节点=x-1,others) * 100%
+    """
+    infer = VariableElimination(bn)
+    
+    new_source = _improve(source)
+    
+    others = {}
+    others.update(evidence)
+    others.update(user_problem_type)
+    others = _dict_subtract(others, target|source)
+    
+    for indicator_name, indicator_type in target.items():
+        numerator = infer.query(variables=[indicator_name], evidence=source|others, show_progress=False)
+        numerator = numerator.values[int(indicator_type)]
+        if np.isnan(numerator):
+            warnings.warn("probability table may exist defect.")
+            numerator = 0
+        
+        denominator = infer.query(variables=[indicator_name], evidence=new_source|others, show_progress=False)
+        denominator = denominator.values[int(indicator_type)]
+        if np.isnan(denominator):
+            warnings.warn("probability table may exist defect.")
+            denominator = 0
+    
+    if numerator == 0 and denominator == 0:
+        return 1.0
+    elif numerator != 0 and denominator == 0:
+        return 1.0 # 如果是inf 误差可能太大
+    return numerator / denominator
+
+def risk_sort(target:Dict[str,str], evidence:Dict[str,str], user_problem_type:Dict[str,str], bn:BayesianNetwork) -> List[Tuple[str,float]]:
+    risk_list = _get_risk_nodes(target=target, evidence=evidence, bn=bn)
+    ratio_list = []
+    
+    for risk in risk_list:
+        mask_dict = _get_abnormal_nodes_between_target_source(target=target, source=risk, evidence=evidence, bn=bn)
+        masked_evidence = _dict_subtract(evidence, mask_dict)
+        ratio = _risk_ratio(target=target, source=risk, evidence=masked_evidence, user_problem_type=user_problem_type, bn=bn)
+        ratio_list.append(ratio)
+    
+    ratio_list = _softmax(ratio_list)
+    comb_result = list(zip(risk_list, ratio_list))
+    comb_result = sorted(comb_result, key=lambda x: x[1], reverse=True)
+    
+    return comb_result
+
 # 已知异常节点排序
 def posterior_sort(evidence:Dict[str,str], user_problem_type:Dict[str,str], bn:BayesianNetwork) -> List[Tuple[str,float]]:
     """
@@ -184,32 +267,17 @@ def improve_sort(target:Dict[str,str], evidence:Dict[str,str], user_problem_type
         ValueError: ratio计算公式只有"1","2"可选    
     """
     
-    if improve_ratio_type not in {"1", "2"}:
-        raise ValueError("improve_ratio must be '1' or '2'!")
-    _improve_ratio = _improve_ratio_1 if improve_ratio_type == "1" else _improve_ratio_2
-    
-    assert len(target) == 1, "One target once time!"
-    
-    target_name, target_type = list(target.items())[0]
-    assert is_abnormal(target_name, target_type) == True, f"{target_name} is already healthy!"
-    assert is_improve(target_name, target_type) == False, f"{target_name} is an improve indicator, but it should be a negtive indicator!"
-    
-    # 排序节点一定是主动节点
-    improve_list = [{indicator_name : indicator_type}
-                    for indicator_name, indicator_type in evidence.items()
-                    if is_improve(indicator_name, indicator_type)]
-    
-    # 如果evidence里没有一个improve indicator 那就返回空列表
-    if not improve_list:
-        return []
-    
-    result = []
+    improve_list = _get_risk_nodes(target=target, evidence=evidence, bn=bn)
+    ratio_list = []
     
     for improve in improve_list:
-        result.append(_improve_ratio(target, improve, evidence, user_problem_type, bn))
+        mask_dict = _get_abnormal_nodes_between_target_source(target=target, source=improve, evidence=evidence, bn=bn)
+        masked_evidence = _dict_subtract(evidence, mask_dict)
+        ratio = _improve_ratio_1(target=target, improve=improve, evidence=masked_evidence, user_problem_type=user_problem_type, bn=bn)
+        ratio_list.append(ratio)
     
-    result = _softmax(result)
-    comb_result = list(zip(improve_list, result))
+    ratio_list = _softmax(ratio_list)
+    comb_result = list(zip(improve_list, ratio_list))
     comb_result = sorted(comb_result, key=lambda x: x[1], reverse=True)
     
     return comb_result
@@ -333,26 +401,19 @@ def generate_samples(bn:BayesianNetwork, size:int=1):
 if __name__ == "__main__":
     model = BayesianNetwork.load("BayesNetwork_hw.bif")
     
-    evidence = {'DBP': '0', 'REM': '0', 'SBP': '0', '体脂率': '1', '体重': '1',
-                '压力值': '3', '年龄': '0', '心电图': '2', '心血管风险': '1', '慢阻肺风险': '0', 
-                '步数': '0', '活动热量': '0', '深睡比例': '0', '清醒次数': '0', '睡眠呼吸率': '0', 
-                '睡眠得分': '1', '睡眠心率': '0', '睡眠时长': '0', '睡眠血氧': '0', '肺功能评估': '0', 
-                '肺部感染风险': '0', '脉搏波传导速度': '1', '血氧': '0', '运动心率': '0', '血管弹性': '1',
-                '静息心率': '0'}
-    
-    user_problem_type = {'心脏健康异常': '1', '运动表现异常': '0', '睡眠异常': '0', '肺健康异常': '0', '其他问题异常': '0'}
-    
-    print(abnormal_sort(target={"血管弹性":"1"}, evidence=evidence, user_problem_type=user_problem_type, bn=model))
-    
     evidence = {'DBP': '0', 'REM': '0', 'SBP': '0', '体脂率': '1', '体重': '1', 
-                '压力值': '1', '年龄': '2', '心电图': '1', '心血管风险': '0', '慢阻肺风险': '0', 
-                '步数': '0', '活动热量': '0', '深睡比例': '0', '清醒次数': '0', '睡眠呼吸率': '1', 
-                '睡眠得分': '2', '睡眠心率': '0', '睡眠时长': '0', '睡眠血氧': '1', '肺功能评估': '1', 
-                '肺部感染风险': '1', '脉搏波传导速度': '1', '血氧': '1', '血管弹性': '1', '运动心率': '0', 
-                '静息心率': '0'}
-    
+            '压力值': '1', '年龄': '2', '心电图': '1', '心血管风险': '0', '慢阻肺风险': '0', 
+            '步数': '0', '活动热量': '0', '深睡比例': '0', '清醒次数': '0', '睡眠呼吸率': '1', 
+            '睡眠得分': '2', '睡眠心率': '0', '睡眠时长': '0', '睡眠血氧': '1', '肺功能评估': '1', 
+            '肺部感染风险': '1', '脉搏波传导速度': '1', '血氧': '1', '血管弹性': '1', '运动心率': '0', 
+            '静息心率': '0'}
     
     user_problem_type = {'心脏健康异常': '0', '运动表现异常': '0', '睡眠异常': '0', '其他问题异常': '0', "肺健康异常":"1"}
     
-    print(abnormal_sort(target={"肺健康异常":"1"}, evidence=evidence, user_problem_type=user_problem_type, bn=model))
+    # print(_get_risk_nodes(target={"肺健康异常":"1"}, evidence=evidence, bn=model))
     
+    # print(_get_abnormal_nodes_between_target_source(target={"肺健康异常":"1"}, source={"肺功能评估":"1"}, evidence=evidence, bn=model))
+    
+    print(improve_sort(target={"肺健康异常":"1"}, evidence=evidence, user_problem_type=user_problem_type, bn=model))
+    print("\n----------------------------------------\n")
+    print(risk_sort(target={"肺健康异常":"1"}, evidence=evidence, user_problem_type=user_problem_type, bn=model))
