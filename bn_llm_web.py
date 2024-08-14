@@ -9,7 +9,7 @@ from llm_utils import (
     problem_classify
 )
 from bn_utils import (
-    posterior_sort, unknown_predict, abnormal_sort, is_abnormal, is_improve
+    risk_sort, unknown_predict, improve_sort, is_abnormal, is_improve
 )
 
 st.write("# Bayes Network LLM")
@@ -150,9 +150,11 @@ with tab2_1:
             st.warning("请先导入贝叶斯网络模型。", icon="⚠️")
         else:
             if user_problem_type:
-                ascribe_result = posterior_sort(evidence=evidence, user_problem_type=user_problem_type, bn=st.session_state.bn_model)
-                st.write(f"对{user_problem_type_str}等问题造成影响，从大到小依次是：")
-                st.write("、".join([f"{indicator}-{data_records.get(indicator)}-{score}" for indicator, score in ascribe_result]))
+                for indicator_name, indicator_type in user_problem_type.items():
+                    if is_abnormal(indicator_name, indicator_type):
+                        ascribe_result = risk_sort(target={indicator_name:indicator_type}, evidence=evidence, user_problem_type=user_problem_type, bn=st.session_state.bn_model)
+                        st.write(f"对“{indicator_name}”造成影响，从大到小依次是：")
+                        st.write("、".join([f"{indicator}-{data_records.get(indicator)}-{score}" for indicator, score in ascribe_result]))
             else:
                 st.warning("请先描述您的问题。", icon="⚠️")
 
@@ -167,11 +169,11 @@ with tab2_2:
 with tab2_3:
     do_improve = st.radio("是否对异常问题进行改善推理", ["是", "否"], horizontal=True, index=1)
     if do_improve == "是":
-        targets = [{k : v} for k, v in user_problem_type.items() if v == "1"]
+        targets = [{k : v} for k, v in user_problem_type.items() if is_abnormal(k, v)]
         improve_results = []
         for target in targets:
             st.write(f"为改善{target}，可先依次改善以下指标：")
-            improve_result = abnormal_sort(target=target, evidence=evidence, user_problem_type=user_problem_type, bn=st.session_state.bn_model)
+            improve_result = improve_sort(target=target, evidence=evidence, user_problem_type=user_problem_type, bn=st.session_state.bn_model)
             print(improve_result)
             st.write("、".join([f"{indicator}-{score}" for indicator, score in improve_result]))
             improve_results.append((target, improve_result))
@@ -183,8 +185,8 @@ with tab2_3:
     if do_custom_improve != "无":
         target = {do_custom_improve : evidence.get(do_custom_improve)}
         st.write(f"为改善{target}，可先依次改善以下指标：")
-        improve_result = abnormal_sort(target=target, evidence=evidence, user_problem_type=user_problem_type, bn=st.session_state.bn_model)
+        improve_result = improve_sort(target=target, evidence=evidence, user_problem_type=user_problem_type, bn=st.session_state.bn_model)
         print(improve_result)
-        st.write("、".join([f"{indicator}-{score}" for indicator, score in improve_result]))
+        st.write("、".join([f"{indicator}-{score}" for indicator, score in improve_result if is_improve(indicator_name=indicator, indicator_type=evidence.get(indicator))]))
 with tab2_4:
     ...

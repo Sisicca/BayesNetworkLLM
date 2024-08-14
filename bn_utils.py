@@ -175,6 +175,7 @@ def _risk_ratio(target:Dict[str,str], source:Dict[str,str], evidence:Dict[str,st
 
 def risk_sort(target:Dict[str,str], evidence:Dict[str,str], user_problem_type:Dict[str,str], bn:BayesianNetwork) -> List[Tuple[str,float]]:
     risk_list = _get_risk_nodes(target=target, evidence=evidence, bn=bn)
+    risk_name_list = [list(item.keys())[0] for item in risk_list]
     ratio_list = []
     
     for risk in risk_list:
@@ -184,7 +185,7 @@ def risk_sort(target:Dict[str,str], evidence:Dict[str,str], user_problem_type:Di
         ratio_list.append(ratio)
     
     ratio_list = _softmax(ratio_list)
-    comb_result = list(zip(risk_list, ratio_list))
+    comb_result = list(zip(risk_name_list, ratio_list))
     comb_result = sorted(comb_result, key=lambda x: x[1], reverse=True)
     
     return comb_result
@@ -268,6 +269,7 @@ def improve_sort(target:Dict[str,str], evidence:Dict[str,str], user_problem_type
     """
     
     improve_list = _get_risk_nodes(target=target, evidence=evidence, bn=bn)
+    improve_name_list = [list(item.keys())[0] for item in improve_list]
     ratio_list = []
     
     for improve in improve_list:
@@ -277,7 +279,7 @@ def improve_sort(target:Dict[str,str], evidence:Dict[str,str], user_problem_type
         ratio_list.append(ratio)
     
     ratio_list = _softmax(ratio_list)
-    comb_result = list(zip(improve_list, ratio_list))
+    comb_result = list(zip(improve_name_list, ratio_list))
     comb_result = sorted(comb_result, key=lambda x: x[1], reverse=True)
     
     return comb_result
